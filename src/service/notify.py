@@ -1,0 +1,169 @@
+import os
+import sys
+import time
+import copy
+import logging
+import requests
+
+from typing import Dict
+
+from src.app_types import discord, post_parse
+from src.core import data_convert
+
+def get_split_line():
+    if getattr(sys, 'frozen', False):
+        # ✅ getattr 安全存取，避免靜態報錯
+        base_path = getattr(sys, '_MEIPASS', os.getcwd())
+    else:
+        base_path = os.getcwd()
+    return os.path.join(base_path, 'src', 'data', 'split_line.png')
+
+log = logging.getLogger(__name__)
+
+class discord_post:
+    def __init__(self, webhook:str) -> None:
+        self.webhook = webhook
+        self.post = discord.Post(content=" ")
+        self.posts_queue: list[discord.Post] = []
+        self.embed = discord.Embed()
+        self.embeds_queue: list[discord.Embed] = []
+        self.files_queue: list[Dict[str, bytes]] = []
+
+    def add_content(self, content: str):
+        """分割內容"""
+        for n in range(0, len(content), 2000):
+            post = copy.deepcopy(self.post)
+            post.embeds = None
+            post.content = content[n:n+2000]
+            self.posts_queue.append(post)
+
+    def add_embed(self, description:str = "", fields: list[discord.Field] = [], image: discord.EmbedUrl|None = None):
+        for n in range(0, len(description), 2048):
+            embed = copy.deepcopy(self.embed)
+            embed.description = description[n:n+2048]
+            embed.fields = None
+            self.embeds_queue.append(embed)
+        if not self.embeds_queue:
+            self.embeds_queue.append(copy.deepcopy(self.embed))
+        if fields:
+            self.embeds_queue[-1].fields = fields
+        if image:
+            self.embeds_queue[-1].image = image
+
+
+    def add_file(self, filename: str|None, file: str|bytes):
+        file_byte = None
+        if isinstance(file, str):
+            if 'http' not in file:
+                if not filename:
+                    filename = os.path.basename(file)
+                if os.path.exists(file):
+                    with open(file, 'rb') as f:
+                        file_byte = f.read()
+                else:
+                    raise Exception(f"路徑 {file} 不存在")
+            else:
+                if not filename:
+                    filename = os.path.basename(file.split("=", 1)[0])
+                response = requests.get(file)
+                if response.status_code == 200:
+                    file_byte = response.content
+                else:
+                    raise Exception(f"網址 {file} 無法下載")
+        else:
+            if not filename:
+                filename = 'file'
+            file_byte = file
+        if len(file_byte) > 9 * 1024 * 1024:
+            raise Exception(f"檔案 {filename} 太大")
+        self.files_queue.append({filename: file_byte})
+
+    def send(self, source_post: discord.Post, files: Dict[str, bytes]|None = None):
+        post = discord.serialize_clean_dict(source_post)
+        if files:
+            response = requests.post(self.webhook, data=post, files=files)
+        else:
+            response = requests.post(self.webhook, json=post)
+
+    def start_send(self):
+        file_post = copy.deepcopy(self.post)
+        file_post.embeds = None
+        file_post.content = None
+        for post in self.posts_queue:
+            self.send(source_post=post)
+            time.sleep(0.5)
+        if self.embeds_queue:
+            embed_post = copy.deepcopy(file_post)
+            embed_post.embeds = self.embeds_queue
+            self.send(source_post=embed_post)
+            time.sleep(0.5)
+        for files in self.files_queue:
+            self.send(source_post=file_post, files=files)
+            time.sleep(0.5)
+
+#def send_post(webhook: str, source_post: discord.Post, files: Dict[str, bytes]|None = None):
+#    if source_post.embeds and files:
+#        files_post = copy.deepcopy(source_post)
+#        files_post.embeds = None
+#        files_post.content = None
+#        send_post(webhook, source_post=source_post)
+#        time.sleep(0.5)
+#        send_post(webhook, source_post=files_post, files=files)
+#    else:
+#        post = discord.serialize_clean_dict(source_post)
+#        if files:
+#            response = requests.post(webhook, data=post, files=files)
+#        else:
+#            response = requests.post(webhook, json=post)
+#
+#        if response.status_code == 200:
+#            log.info(f"Discord post sent to {webhook}")
+#        else:
+#            log.error(f"Discord post failed to send to {webhook}")
+
+def send_post(webhook: str, post_parser: post_parse.PostParser):
+    set_post = discord_post(webhook)
+    # 初始化貼文基礎資訊
+    post = set_post.post
+    post.username = post_parser.author_name
+    post.avatar_url = post_parser.author_thumbnail
+
+    # 初始化Embed基礎資訊
+    set_post.embed.author = discord.Author(
+        name=post_parser.author_name,
+        url=post_parser.channel_url,
+        icon_url=post_parser.author_thumbnail
+        )
+    set_post.embed.title = "頻道會員限定" if post_parser.is_membership else "公開貼文"
+    set_post.embed.url = post_parser.post_url
+    set_post.embed.color = int("#584AD7"[1:], 16)
+    set_post.embed.timestamp = f"{data_convert.get_today()[0:4]}-{data_convert.get_today()[4:6]}-{data_convert.get_today()[6:]} 00:00"
+    set_post.embed.footer = discord.Footer(text=post_parser.author_name, icon_url=post_parser.author_thumbnail)
+    
+    # 添加貼文內文
+    set_post.add_embed(description=post_parser.content_text)
+    # 添加貼文附件
+    for attachment in post_parser.attachments:
+        set_post.add_embed(image=discord.EmbedUrl(url=attachment))
+    if post_parser.video:
+        # 添加影片
+        video_embed = discord.Embed(
+            author = discord.Author(
+                name=post_parser.video.uploader,
+                url=data_convert.CHANNEL_URL.format(channel_id=post_parser.video.uploader_id),
+                icon_url=post_parser.video.uploader_thumbnail
+                ),
+            title = post_parser.video.title,
+            url = post_parser.video.url,
+            image=discord.EmbedUrl(url=post_parser.video.thumbnail),
+            description = post_parser.video.description,
+            color = "#584AD7",
+            timestamp = f"{post_parser.today[0:4]}-{post_parser.today[4:6]}-{post_parser.today[6:]} 00:00",
+            footer = discord.Footer(text=f"影片長度 {post_parser.video.length}", icon_url=post_parser.author_thumbnail)
+            )
+        set_post.embeds_queue.append(video_embed)
+    
+    # 添加分隔線
+    set_post.add_file(filename="split_line.png", file=get_split_line())
+
+    set_post.start_send()
