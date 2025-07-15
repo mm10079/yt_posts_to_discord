@@ -1,0 +1,14 @@
+.pytest_cache/
+.vscode/
+__pycache__
+src/channels/
+downloads/
+database/
+model/
+test/
+
+cookies.txt
+*.json
+*.cmd
+
+clear_empty.py

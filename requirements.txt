@@ -1,0 +1,5 @@
+aiohttp
+aiofiles
+requests
+openai >= 1.95.1
+git+https://github.com/mm10079/youtube-community-tab.git
