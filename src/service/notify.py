@@ -30,27 +30,52 @@ class discord_post:
         self.embeds_queue: list[discord.Embed] = []
         self.files_queue: list[Dict[str, bytes]] = []
 
+    def get_clean_post(self):
+        post = copy.deepcopy(self.post)
+        post.embeds = None
+        post.content = None
+        return post
+    
+    def get_clean_embed(self):
+        embed = copy.deepcopy(self.embed)
+        embed.fields = None
+        return embed
+
     def add_content(self, content: str):
         """分割內容"""
-        for n in range(0, len(content), 2000):
+        for text in discord.split_text(content, discord.DESCRIPTION_LIMIT):
+            if not text:
+                continue
             post = copy.deepcopy(self.post)
             post.embeds = None
-            post.content = content[n:n+2000]
+            post.content = text
             self.posts_queue.append(post)
 
-    def add_embed(self, description:str = "", fields: list[discord.Field] = [], image: discord.EmbedUrl|None = None):
-        for n in range(0, len(description), 2048):
-            embed = copy.deepcopy(self.embed)
-            embed.description = description[n:n+2048]
-            embed.fields = None
-            self.embeds_queue.append(embed)
-        if not self.embeds_queue:
-            self.embeds_queue.append(copy.deepcopy(self.embed))
+    def add_embed(self, description:str = "", fields: list[discord.Field] = []):
+        for text in discord.split_text(description, discord.DESCRIPTION_LIMIT):
+            if not text:
+                continue
+            post = self.get_clean_post()
+            embed = self.get_clean_embed()
+            embed.description = text
+            post.embeds = [embed]
+            self.posts_queue.append(post)
+        if not self.embeds_queue and fields:
+            self.embeds_queue.append(self.get_clean_embed())
         if fields:
             self.embeds_queue[-1].fields = fields
-        if image:
-            self.embeds_queue[-1].image = image
 
+    def add_image(self, image: discord.EmbedUrl):
+        if not self.embeds_queue and not self.posts_queue:
+            embed = self.get_clean_embed()
+            embed.image = image
+            self.embeds_queue.append(embed)
+        elif self.embeds_queue:
+            self.embeds_queue[-1].image = image
+        elif self.posts_queue:
+            if not self.posts_queue[-1].embeds:
+                self.posts_queue[-1].embeds = [self.get_clean_embed()]
+            self.posts_queue[-1].embeds[-1].image = image
 
     def add_file(self, filename: str|None, file: str|bytes):
         file_byte = None
@@ -85,6 +110,9 @@ class discord_post:
             response = requests.post(self.webhook, data=post, files=files)
         else:
             response = requests.post(self.webhook, json=post)
+        if response.status_code != 204:
+            log.error(f"發送貼文失敗，狀態碼：{response.status_code}")
+            raise Exception(f"發送貼文失敗：{response.text}")
 
     def start_send(self):
         file_post = copy.deepcopy(self.post)
@@ -123,7 +151,7 @@ def send_post(webhook: str, post_parser: post_parse.PostParser):
     set_post.add_embed(description=post_parser.content_text)
     # 添加貼文附件
     for attachment in post_parser.attachments:
-        set_post.add_embed(image=discord.EmbedUrl(url=attachment))
+        set_post.add_image(image=discord.EmbedUrl(url=attachment))
     if post_parser.video:
         # 添加影片
         video_embed = discord.Embed(

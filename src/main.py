@@ -4,6 +4,7 @@ import asyncio
 from youtube_community_tab.post import Post as YT_Post
 
 from src import BASE_DIR, __description__
+from src.app_types import discord
 from src.app_types.post_parse import PostParser
 from src.app_types.database import Data_PostEnum, Data_Post, Status
 from src.core import data_convert
@@ -99,7 +100,11 @@ class work_station:
             try:
                 post_parser = PostParser(post.content)
                 # 翻譯貼文
-                post_parser.content_text = gpt.translate(post_parser.content_text)
+                content = ""
+                for text in discord.split_text(post_parser.content_text, discord.DESCRIPTION_LIMIT):
+                    if text:
+                        content += gpt.translate(text) + "\n"
+                post_parser.content_text = content.strip()
                 if post_parser.video:
                     # 翻譯影片介紹
                     post_parser.video.description = gpt.translate(post_parser.video.description)

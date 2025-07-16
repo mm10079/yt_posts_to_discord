@@ -1,7 +1,7 @@
 import os
 import re
 
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import List
 
@@ -13,12 +13,13 @@ POST_URL = "https://www.youtube.com/post/{post_id}"
 VIDEO_URL = "https://www.youtube.com/watch?v={video_id}"
 
 class today(object):
-    year = datetime.now().strftime('%Y')
-    month = datetime.now().strftime('%m')
-    day = datetime.now().strftime('%d')
-    hour = datetime.now().strftime('%H')
-    minute = datetime.now().strftime('%M')
-    second = datetime.now().strftime('%S')
+    utc_now = datetime.now(timezone.utc)
+    year = utc_now.strftime('%Y')
+    month = utc_now.strftime('%m')
+    day = utc_now.strftime('%d')
+    hour = utc_now.strftime('%H')
+    minute = utc_now.strftime('%M')
+    second = utc_now.strftime('%S')
 
 @dataclass
 class FileInfo:

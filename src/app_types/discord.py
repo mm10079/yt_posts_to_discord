@@ -2,12 +2,8 @@ import re
 from dataclasses import dataclass, field, is_dataclass, asdict
 from typing import Dict
 
+DESCRIPTION_LIMIT = 3000 # API限制4096個字，安全起見改為3000
 FILE_LIMIT = 10 * 1024 * 1024 # 10MB
-
-def check_url(url: str) -> str:
-    if url.startswith("http://") or url.startswith("https://"):
-        return url
-    raise Exception("Invalid url")
 
 @dataclass
 class Author:
@@ -91,8 +87,8 @@ class Embed:
             if len(self.title) > 256:
                 raise Exception('標題超過 256 字符')
         if self.description:
-            if len(self.description) > 4096:
-                raise Exception('描述內文超過 4096 字符')
+            if len(self.description) > DESCRIPTION_LIMIT:
+                raise Exception(f'描述內文超過 {DESCRIPTION_LIMIT} 字符')
         if self.url:
             self.url = check_url(self.url)
         if self.color:
@@ -158,6 +154,47 @@ class Files:
     """
     files: Dict[str, bytes]
 
+
+
+def check_url(url: str) -> str:
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    raise Exception("Invalid url")
+
+def split_text(text: str, limit: int) -> list[str]:
+    """
+    將文字依據限制長度進行分段
+    優先以換行符號 `\n` 拆分，超過限制才會拆字串
+    """
+    segments = []
+    start = 0
+    text_length = len(text)
+
+    while start < text_length:
+        # 如果剩下的長度在限制內，就直接加入
+        if text_length - start <= limit:
+            segment = text[start:].strip('\n')
+            if segment:
+                segments.append(segment)
+            break
+
+        # 嘗試從 start 到 limit 範圍內尋找最後一個換行符號
+        end = start + limit
+        newline_pos = text.rfind('\n', start, end)
+
+        if newline_pos != -1:
+            # 找到換行符，優先以此分段
+            segment = text[start:newline_pos].strip('\n')
+            start = newline_pos + 1  # 跳過換行
+        else:
+            # 沒有換行，直接以限制切斷
+            segment = text[start:end].strip('\n')
+            start = end
+
+        if segment:
+            segments.append(segment)
+
+    return segments
 
 
 def serialize_clean_dict(obj: Dict|list|Post) -> Dict|list:

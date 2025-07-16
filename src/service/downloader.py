@@ -16,6 +16,9 @@ from src.service import compress
 log = logging.getLogger(__name__)
 
 def download_json(filepath, content):
+    if os.path.exists(filepath):
+        log.info(f'檔案已存在：{filepath}')
+        return
     log.debug(f'儲存json檔案：{filepath}')
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     with open(filepath, 'w', encoding='utf-8') as f:
