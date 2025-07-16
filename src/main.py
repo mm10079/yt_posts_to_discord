@@ -65,6 +65,8 @@ class work_station:
 
     def notify_posts(self):
         """發送原文貼文至Discord"""
+        if not self.config.discord_original_token:
+            return
         log.info(f"開始讀取待通知貼文...")
         if self.db:
             self.data_posts = self.db.get_specific_list(Data_PostEnum.ORIGIN_NOTIFY.value, Status.NOT_PROCESS)
@@ -82,27 +84,31 @@ class work_station:
 
     def translate_posts(self):
         """發送翻譯貼文至Discord"""
-        if self.config.enable_translate and self.config.chatgpt_apikey and self.config.discord_translated_token:
-            log.info(f"開始讀取待翻譯貼文...")
-            if self.db:
-                self.data_posts = self.db.get_specific_list(Data_PostEnum.TRANSLATE_NOTIFY.value, Status.NOT_PROCESS)
-                log.info(f"未通知翻譯貼文數：{len(self.data_posts)}")
-            gpt = translate.Chatgpt(self.config.chatgpt_apikey, self.config.chatgpt_model)
-            for post in self.data_posts:
-                log.info(f"通知貼文：{post.pid}")
-                try:
-                    post_parser = PostParser(post.content)
-                    # 翻譯貼文
-                    post_parser.content_text = gpt.translate(post_parser.content_text)
-                    if post_parser.video:
-                        # 翻譯影片介紹
-                        post_parser.video.description = gpt.translate(post_parser.video.description)
-                    notify.send_post(self.config.discord_translated_token, post_parser)
-                    if self.db:
-                        self.db.insert_post_data(Data_PostEnum.PID.value, post.pid, Data_PostEnum.TRANSLATE_NOTIFY.value, Status.FINISH.value)
-                except Exception as e:
-                    log.error(f"通知失敗，PID：{post.pid}")
-                    log.error(f"通知貼文失敗：{e}")
+        if not self.config.enable_translate or \
+            not self.config.chatgpt_apikey or \
+            not self.config.chatgpt_model or \
+            not self.config.discord_translated_token:
+            return
+        log.info(f"開始讀取待翻譯貼文...")
+        if self.db:
+            self.data_posts = self.db.get_specific_list(Data_PostEnum.TRANSLATE_NOTIFY.value, Status.NOT_PROCESS)
+            log.info(f"未通知翻譯貼文數：{len(self.data_posts)}")
+        gpt = translate.Chatgpt(self.config.chatgpt_apikey, self.config.chatgpt_model)
+        for post in self.data_posts:
+            log.info(f"通知貼文：{post.pid}")
+            try:
+                post_parser = PostParser(post.content)
+                # 翻譯貼文
+                post_parser.content_text = gpt.translate(post_parser.content_text)
+                if post_parser.video:
+                    # 翻譯影片介紹
+                    post_parser.video.description = gpt.translate(post_parser.video.description)
+                notify.send_post(self.config.discord_translated_token, post_parser)
+                if self.db:
+                    self.db.insert_post_data(Data_PostEnum.PID.value, post.pid, Data_PostEnum.TRANSLATE_NOTIFY.value, Status.FINISH.value)
+            except Exception as e:
+                log.error(f"通知失敗，PID：{post.pid}")
+                log.error(f"通知貼文失敗：{e}")
         
     def dl_media(self):
         if not self.config.enable_media or not self.config.media_output:
@@ -115,12 +121,20 @@ class work_station:
         for post in self.data_posts:
             log.info(f"下載媒體貼文：{post.pid}")
             try:
-                post_parser = PostParser(post.content)
-                asyncio.run(downloader.save_attachments(self.config.media_output, post.pid, post_parser.content_links))
-                if self.db:
+                success, error, unknown  = downloader.download_links(self.config.media_output, post.links)
+                if success or error or unknown:
+                    log.info(f"[PID:{post.pid}]下載狀態總結：{len(success)} 個成功，{len(error)} 個失敗，{len(unknown)} 個未知")
+                if self.db and not error:
                     self.db.insert_post_data(Data_PostEnum.PID.value, post.pid, Data_PostEnum.DOWNLOADED.value, Status.FINISH.value)
+                else:
+                    for f in error:
+                        log.error(f"[PID:{post.pid}]下載失敗：{f.url}")
+                for f in unknown:
+                    log.warning(f"[PID:{post.pid}]未知檔案名稱，需檢查是否下載成功：{f.url}")
+                if self.config.discord_download_token:
+                    notify.send_media(self.config.discord_download_token, PostParser(post.content), success, error, unknown)
             except Exception as e:
-                log.error(f"下載媒體貼文失敗，PID：{post.pid}")
+                log.error(f"[PID:{post.pid}]下載媒體貼文失敗")
 
 def main():
     log.info(f"開始執行主程式...")
@@ -134,7 +148,7 @@ def main():
         station.record_posts()
         station.notify_posts()
         station.translate_posts()
-
+        station.dl_media()
         log.info(f"設定檔：{config.config_name} 作業完成！\n")
     log.info(f"執行主程式結束")
 

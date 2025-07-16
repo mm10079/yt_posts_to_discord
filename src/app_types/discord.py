@@ -2,6 +2,8 @@ import re
 from dataclasses import dataclass, field, is_dataclass, asdict
 from typing import Dict
 
+FILE_LIMIT = 10 * 1024 * 1024 # 10MB
+
 def check_url(url: str) -> str:
     if url.startswith("http://") or url.startswith("https://"):
         return url
@@ -150,7 +152,10 @@ class Post:
 
 @dataclass
 class Files:
-    """檔案不能與Embed混用，需用requests.post(webhook, data=json, files=files)"""
+    """
+    檔案不能與Embed混用，需用requests.post(webhook, data=json, files=files)
+    files: {'filename.ext': open('filename.ext', 'rb')}
+    """
     files: Dict[str, bytes]
 
 

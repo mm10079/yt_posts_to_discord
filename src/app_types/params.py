@@ -98,7 +98,7 @@ class DiscordParams:
             "help": "Discord Token\n用於發送翻譯貼文",
             }
         )
-    discord_mediafile_token: str = field(
+    discord_download_token: str = field(
         default= '',
         metadata={
             "help": "Discord Token\n用於發送媒體檔案",

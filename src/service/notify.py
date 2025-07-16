@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import time
 import copy
 import logging
@@ -8,7 +9,7 @@ import requests
 from typing import Dict
 
 from src.app_types import discord, post_parse
-from src.core import data_convert
+from src.service import compress
 
 def get_split_line():
     if getattr(sys, 'frozen', False):
@@ -101,27 +102,54 @@ class discord_post:
             self.send(source_post=file_post, files=files)
             time.sleep(0.5)
 
-#def send_post(webhook: str, source_post: discord.Post, files: Dict[str, bytes]|None = None):
-#    if source_post.embeds and files:
-#        files_post = copy.deepcopy(source_post)
-#        files_post.embeds = None
-#        files_post.content = None
-#        send_post(webhook, source_post=source_post)
-#        time.sleep(0.5)
-#        send_post(webhook, source_post=files_post, files=files)
-#    else:
-#        post = discord.serialize_clean_dict(source_post)
-#        if files:
-#            response = requests.post(webhook, data=post, files=files)
-#        else:
-#            response = requests.post(webhook, json=post)
-#
-#        if response.status_code == 200:
-#            log.info(f"Discord post sent to {webhook}")
-#        else:
-#            log.error(f"Discord post failed to send to {webhook}")
-
 def send_post(webhook: str, post_parser: post_parse.PostParser):
+    set_post = discord_post(webhook)
+    # 初始化貼文基礎資訊
+    post = set_post.post
+    post.username = post_parser.author_name
+    post.avatar_url = post_parser.author_thumbnail
+    # 初始化Embed基礎資訊
+    set_post.embed.author = discord.Author(
+        name=post_parser.author_name,
+        url=post_parser.channel_url,
+        icon_url=post_parser.author_thumbnail
+        )
+    set_post.embed.title = "頻道會員限定" if post_parser.is_membership else "公開貼文"
+    set_post.embed.url = post_parser.post_url
+    set_post.embed.color = int("#584AD7"[1:], 16)
+    set_post.embed.timestamp = f"{post_parse.today.year}-{post_parse.today.month}-{post_parse.today.day} {post_parse.today.hour}:{post_parse.today.minute}"
+    set_post.embed.footer = discord.Footer(text=post_parser.author_name, icon_url=post_parser.author_thumbnail)
+    # 添加貼文內文
+    set_post.add_embed(description=post_parser.content_text)
+    # 添加貼文附件
+    for attachment in post_parser.attachments:
+        set_post.add_embed(image=discord.EmbedUrl(url=attachment))
+    if post_parser.video:
+        # 添加影片
+        video_embed = discord.Embed(
+            author = discord.Author(
+                name=post_parser.video.uploader_name,
+                url=post_parser.video.uploader_channel,
+                icon_url=post_parser.video.uploader_thumbnail
+                ),
+            title = post_parser.video.title,
+            url = post_parser.video.url,
+            image=discord.EmbedUrl(url=post_parser.video.thumbnail),
+            description = post_parser.video.description,
+            color = "#584AD7",
+            timestamp = f"{post_parser.today[0:4]}-{post_parser.today[4:6]}-{post_parser.today[6:]} 00:00",
+            footer = discord.Footer(text=f"影片長度 {post_parser.video.length}", icon_url=post_parser.author_thumbnail)
+            )
+        set_post.embeds_queue.append(video_embed)
+    # 添加分隔線
+    set_post.add_file(filename="split_line.png", file=get_split_line())
+    set_post.start_send()
+
+    
+def send_media(webhook: str, post_parser: post_parse.PostParser, success: list[post_parse.FileInfo], error: list[post_parse.FileInfo], unknown: list[post_parse.FileInfo]):
+    if not success and not error and not unknown:
+        return
+    
     set_post = discord_post(webhook)
     # 初始化貼文基礎資訊
     post = set_post.post
@@ -134,36 +162,37 @@ def send_post(webhook: str, post_parser: post_parse.PostParser):
         url=post_parser.channel_url,
         icon_url=post_parser.author_thumbnail
         )
-    set_post.embed.title = "頻道會員限定" if post_parser.is_membership else "公開貼文"
+    set_post.embed.title = "下載狀態通知"
     set_post.embed.url = post_parser.post_url
     set_post.embed.color = int("#584AD7"[1:], 16)
-    set_post.embed.timestamp = f"{data_convert.get_today()[0:4]}-{data_convert.get_today()[4:6]}-{data_convert.get_today()[6:]} 00:00"
+    set_post.embed.timestamp = f"{post_parse.today.year}-{post_parse.today.month}-{post_parse.today.day} {post_parse.today.hour}:{post_parse.today.minute}"
     set_post.embed.footer = discord.Footer(text=post_parser.author_name, icon_url=post_parser.author_thumbnail)
     
     # 添加貼文內文
-    set_post.add_embed(description=post_parser.content_text)
-    # 添加貼文附件
-    for attachment in post_parser.attachments:
-        set_post.add_embed(image=discord.EmbedUrl(url=attachment))
-    if post_parser.video:
-        # 添加影片
-        video_embed = discord.Embed(
-            author = discord.Author(
-                name=post_parser.video.uploader,
-                url=data_convert.CHANNEL_URL.format(channel_id=post_parser.video.uploader_id),
-                icon_url=post_parser.video.uploader_thumbnail
-                ),
-            title = post_parser.video.title,
-            url = post_parser.video.url,
-            image=discord.EmbedUrl(url=post_parser.video.thumbnail),
-            description = post_parser.video.description,
-            color = "#584AD7",
-            timestamp = f"{post_parser.today[0:4]}-{post_parser.today[4:6]}-{post_parser.today[6:]} 00:00",
-            footer = discord.Footer(text=f"影片長度 {post_parser.video.length}", icon_url=post_parser.author_thumbnail)
-            )
-        set_post.embeds_queue.append(video_embed)
-    
-    # 添加分隔線
-    set_post.add_file(filename="split_line.png", file=get_split_line())
+    description = ""
+    for file in success:
+        description += f"成功：[{file.name}]({file.url})\n"
+        if file.size < discord.FILE_LIMIT:
+            c_filepath = file.path
+            if not os.path.isfile(file.path):
+                c_filepath = file.path + '.7z'
+                if not os.path.exists(c_filepath):
+                    log.info(f"壓縮檔案：{c_filepath}")
+                    compress.compress_to_7z(file.path)
+            set_post.add_file(filename=file.name, file=c_filepath)
 
+        if os.path.isfile(file.path):
+            file_ext = file.path.split('.')[-1]
+            if file_ext in ['rar', 'zip', '7z']:
+                os.remove(file.path)
+
+
+    for file in error:
+        description += f"失敗：[{file.name}]({file.url})\n"
+    n = 0
+    for file in unknown:
+        n += 1
+        description += f"未知：[{n}.檔案]({file.url})\n"
+    set_post.add_embed(description=description)
+    
     set_post.start_send()

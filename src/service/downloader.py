@@ -8,7 +8,10 @@ import logging
 import requests
 import subprocess
 
+from urllib.parse import unquote
 from src.utils import path_format
+from src.app_types import post_parse
+from src.service import compress
 
 log = logging.getLogger(__name__)
 
@@ -161,16 +164,6 @@ async def save_attachments(folder: str, pid: str, links: list[str]):
     await asyncio.gather(*tasks)
     await session.close()
 
-async def download_links(folder: str, links: list[str]):
-    session = aiohttp.ClientSession()
-    tasks = []
-    for link in links:
-        filepath = os.path.join(folder, os.path.basename(link))
-        log.info(f"下載附件：{link}")
-        task = async_download(link, filepath, session)
-        tasks.append(task)
-    await asyncio.gather(*tasks)
-    await session.close()
 
 
 def mediafire_downloader(url: str, folder: str):
@@ -181,12 +174,38 @@ def mediafire_downloader(url: str, folder: str):
 
     filename = ''
     if '/file/' in url or '/folder/' in url or '/file_premium/' in url:
-        filename = url.split('/')[-1].replace('+', ' ')
+        filename = unquote(url.split('/')[-1].replace('+', ' '))
     elif 'app.' in url:
         log.info(f"無法取得檔案名稱！URL: {url}")
 
     mediafire = path_format.get_mdrs()
     command = [mediafire, '-o', folder, url]
-    subprocess.run(command)
-
+    try:
+        subprocess.run(command)  
+    except subprocess.CalledProcessError as response:
+        log.error(f"下載失敗！URL: {url}")
+        log.error(f"錯誤訊息：\n{response.stderr.decode('utf-8')}")
     return filename
+
+def download_links(folder: str, links: list[str]) -> tuple[list[post_parse.FileInfo], list[post_parse.FileInfo], list[post_parse.FileInfo]]:
+    """return success, error, unknown"""
+    success, error, unknown = [], [], []
+    for link in links:
+        file_info = None
+        if 'mediafire' in link:
+            log.info(f"下載媒體貼文：{link}")
+            filename = mediafire_downloader(link, folder)
+            filepath = os.path.join(folder, filename)
+            file_info = post_parse.FileInfo(path=filepath, url=link, name=filename)
+        if file_info:
+            if file_info.size:
+                success.append(file_info)
+                try:
+                    compress.UncompresserFactory.get_uncompresser(filepath).uncompress(filepath)
+                except Exception as e:
+                    pass
+            elif not file_info.name:
+                unknown.append(file_info)
+            else:
+                error.append(file_info)
+    return success, error, unknown
